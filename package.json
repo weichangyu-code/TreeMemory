@@ -1,0 +1,33 @@
+{
+  "name": "treememory",
+  "version": "1.0.0",
+  "description": "AI conversation program with tree-based memory system",
+  "type": "module",
+  "scripts": {
+    "dev:cli": "tsx src/index.ts cli",
+    "dev:server": "tsx src/index.ts server",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.8.0",
+    "dotenv": "^17.3.1",
+    "fastify": "^5.8.4",
+    "gpt-tokenizer": "^3.4.0",
+    "openai": "^6.32.0",
+    "pino": "^10.3.1",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2",
+    "ulid": "^3.0.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.5.0",
+    "vitest": "^4.1.1"
+  }
+}
