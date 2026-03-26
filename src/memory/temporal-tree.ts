@@ -4,6 +4,7 @@ import { countTokens } from '../llm/tokenizer.js';
 import { chatCompletion } from '../llm/client.js';
 import { activateNode, effectiveScore } from './activity.js';
 import { getHourKey, getDayKey, hourKeyToStart, hourKeyToEnd, dayKeyToStart, dayKeyToEnd, nowISO } from '../utils/time.js';
+import { HOUR_SUMMARY_PROMPT, DAY_SUMMARY_PROMPT } from '../prompts/index.js';
 import type { TemporalNode } from './types.js';
 
 function rowToTemporalNode(row: Record<string, unknown>): TemporalNode {
@@ -104,7 +105,7 @@ export async function summarizeHour(hourKey: string): Promise<TemporalNode | nul
   const summary = await chatCompletion([
     {
       role: 'system',
-      content: '你是一个对话摘要助手。请用简洁的中文总结以下对话内容，保留关键事实、决定和行动项。控制在200字以内。',
+      content: HOUR_SUMMARY_PROMPT,
     },
     { role: 'user', content: conversationText },
   ], { temperature: 0.3 });
@@ -174,7 +175,7 @@ export async function summarizeDay(dayKey: string): Promise<TemporalNode | null>
   const summary = await chatCompletion([
     {
       role: 'system',
-      content: '你是一个对话摘要助手。请将以下一天内各时段的对话摘要合并为一个完整的日摘要，保留所有重要信息。控制在300字以内。',
+      content: DAY_SUMMARY_PROMPT,
     },
     { role: 'user', content: text },
   ], { temperature: 0.3 });

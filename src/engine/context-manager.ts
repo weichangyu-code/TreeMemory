@@ -3,11 +3,9 @@ import { chatCompletion } from '../llm/client.js';
 import { countTokens, countMessagesTokens } from '../llm/tokenizer.js';
 import * as knowledgeTree from '../memory/knowledge-tree.js';
 import { recall } from '../memory/recall.js';
+import { CHAT_SYSTEM_PROMPT, BUFFER_SUMMARY_PROMPT } from '../prompts/index.js';
 import type { ChatMessage } from '../llm/types.js';
 import type { RecallResult } from '../memory/types.js';
-
-const BASE_SYSTEM_PROMPT = `你是一个智能助手，拥有长期记忆能力。你能记住用户的信息和对话历史。
-请用中文回复，保持友好和有帮助的态度。如果用户提供了个人信息，表示你会记住。`;
 
 /**
  * Check if the current buffer exceeds the summarization threshold.
@@ -33,7 +31,7 @@ export async function summarizeBuffer(
   const summary = await chatCompletion([
     {
       role: 'system',
-      content: '你是一个对话摘要助手。请用简洁的中文总结以下对话内容，保留关键事实、决定和行动项。控制在300字以内。',
+      content: BUFFER_SUMMARY_PROMPT,
     },
     { role: 'user', content: text },
   ], { temperature: 0.3 });
@@ -59,7 +57,7 @@ export function assemblePrompt(
 
   // 1. System message with knowledge context
   const knowledgeContext = knowledgeTree.toContextString(recallResult.knowledgeContext);
-  let systemContent = BASE_SYSTEM_PROMPT;
+  let systemContent = CHAT_SYSTEM_PROMPT;
   if (knowledgeContext) {
     systemContent += '\n\n' + knowledgeContext;
   }
@@ -96,7 +94,7 @@ export function assemblePrompt(
  * given the current buffer and user message.
  */
 export function calculateRecallBudget(buffer: ChatMessage[]): number {
-  const systemTokens = countTokens(BASE_SYSTEM_PROMPT) + 50; // buffer for knowledge
+  const systemTokens = countTokens(CHAT_SYSTEM_PROMPT) + 50; // buffer for knowledge
   const bufferTokens = countMessagesTokens(buffer);
   const responseReserve = Math.min(2048, Math.floor(config.maxContextTokens * 0.15));
   const available = config.maxContextTokens - systemTokens - bufferTokens - responseReserve;

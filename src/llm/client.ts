@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { config } from '../config/index.js';
-import type { ChatMessage, CompletionOptions } from './types.js';
+import type { ChatMessage, CompletionOptions, ChatCompletionResult, ChatCompletionMessageToolCall } from './types.js';
 
 let client: OpenAI | null = null;
 
@@ -52,4 +52,36 @@ export async function* streamChatCompletion(
       yield delta;
     }
   }
+}
+
+/**
+ * Full chat completion with tools support. Returns complete response including tool calls.
+ */
+export async function chatCompletionFull(
+  messages: ChatMessage[],
+  options?: CompletionOptions
+): Promise<ChatCompletionResult> {
+  const c = getClient();
+
+  type CreateParams = Parameters<typeof c.chat.completions.create>[0] & { stream?: false };
+  const createParams: CreateParams = {
+    model: options?.model || config.llmModel,
+    messages,
+    temperature: options?.temperature ?? 0.7,
+    max_tokens: options?.maxTokens,
+    stream: false,
+  };
+  if (options?.tools && options.tools.length > 0) {
+    createParams.tools = options.tools;
+    if (options.toolChoice) {
+      createParams.tool_choice = options.toolChoice;
+    }
+  }
+  const response = await c.chat.completions.create(createParams);
+  const choice = response.choices[0];
+  return {
+    content: choice?.message?.content || null,
+    toolCalls: choice?.message?.tool_calls as ChatCompletionMessageToolCall[] | undefined,
+    finishReason: choice?.finish_reason || 'stop',
+  };
 }

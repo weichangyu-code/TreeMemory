@@ -19,7 +19,18 @@ export function countMessagesTokens(messages: ChatMessage[]): number {
   for (const msg of messages) {
     total += PER_MESSAGE_OVERHEAD;
     total += countTokens(msg.role);
-    total += countTokens(msg.content);
+    // content 可能是 string、数组或 null/undefined
+    const content = msg.content;
+    if (typeof content === 'string') {
+      total += countTokens(content);
+    } else if (Array.isArray(content)) {
+      // 处理多模态内容（如图片+文字）
+      for (const part of content) {
+        if ('text' in part && typeof part.text === 'string') {
+          total += countTokens(part.text);
+        }
+      }
+    }
   }
   return total;
 }

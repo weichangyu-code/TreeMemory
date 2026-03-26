@@ -1,7 +1,8 @@
 import { ulid } from 'ulid';
 import { getDb } from '../db/connection.js';
-import { streamChatCompletion, chatCompletion } from '../llm/client.js';
+import { streamChatCompletion, chatCompletionFull } from '../llm/client.js';
 import { countTokens, countMessagesTokens } from '../llm/tokenizer.js';
+import { getToolDefinitions, executeTool } from './tools.js';
 import * as temporalTree from '../memory/temporal-tree.js';
 import { recall } from '../memory/recall.js';
 import {
@@ -12,6 +13,7 @@ import {
 } from './context-manager.js';
 import { nowISO } from '../utils/time.js';
 import { logger } from '../utils/logger.js';
+import { extractKnowledgeImmediate } from '../background/knowledge-extractor.js';
 import type { ChatMessage } from '../llm/types.js';
 import type { ConversationState } from './types.js';
 
@@ -57,7 +59,9 @@ export function getConversation(conversationId?: string): ConversationState {
       )
       .all(id) as { role: string; content: string; token_count: number }[];
     for (const msg of messages) {
-      state.buffer.push({ role: msg.role as ChatMessage['role'], content: msg.content });
+      // 确保角色是有效的消息角色类型
+      const role = msg.role as 'system' | 'user' | 'assistant';
+      state.buffer.push({ role, content: msg.content });
       state.bufferTokenCount += msg.token_count;
     }
     state.turnCount = Math.floor(messages.length / 2);
@@ -73,7 +77,7 @@ const conversationSummaries = new Map<string, string>();
 /**
  * Store a message in both the working buffer and persistent storage.
  */
-function storeMessage(state: ConversationState, role: ChatMessage['role'], content: string): void {
+function storeMessage(state: ConversationState, role: 'user' | 'assistant' | 'system', content: string): void {
   const db = getDb();
   const now = nowISO();
   const tokens = countTokens(content);
@@ -144,19 +148,63 @@ export async function handleTurn(
   const historySummary = conversationSummaries.get(state.id);
   const messages = assemblePrompt(state.buffer, recallResult, historySummary);
 
-  // 6. Call LLM
-  const response = await chatCompletion(messages);
+  // 6. Tool calling 循环
+  const toolDefs = getToolDefinitions();
+  let finalResponse = '';
+  const MAX_TOOL_ITERATIONS = 5;
 
-  // 7. Store assistant response
-  storeMessage(state, 'assistant', response);
-  state.turnCount++;
+  for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
+    const result = await chatCompletionFull(messages, {
+      tools: toolDefs,
+      toolChoice: 'auto',
+    });
 
-  // 8. Enqueue background knowledge extraction every 5 turns
-  if (state.turnCount % 5 === 0) {
-    enqueueKnowledgeExtraction(state.id);
+    if (result.toolCalls && result.toolCalls.length > 0) {
+      // 1. 将 assistant 消息（含 tool_calls）加入 messages
+      messages.push({
+        role: 'assistant' as const,
+        content: result.content,
+        tool_calls: result.toolCalls,
+      });
+
+      // 2. 执行每个工具，将结果加入 messages
+      for (const toolCall of result.toolCalls) {
+        // 只处理 function 类型的 tool call
+        if (toolCall.type !== 'function') continue;
+
+        let toolResult: string;
+        try {
+          const args = JSON.parse(toolCall.function.arguments);
+          toolResult = await executeTool(toolCall.function.name, args);
+        } catch (err) {
+          toolResult = `工具调用失败: ${err instanceof Error ? err.message : String(err)}`;
+        }
+        messages.push({
+          role: 'tool' as const,
+          tool_call_id: toolCall.id,
+          content: toolResult,
+        });
+      }
+
+      // 继续循环，让 LLM 处理工具结果
+      continue;
+    }
+
+    // 没有 tool_calls，取最终响应
+    finalResponse = result.content || '';
+    break;
   }
 
-  return { response, conversationId: state.id };
+  // 7. Store assistant response
+  storeMessage(state, 'assistant', finalResponse);
+  state.turnCount++;
+
+  // 8. Realtime knowledge extraction (fire-and-forget, does not block response)
+  extractKnowledgeImmediate(state.id).catch((err) => {
+    logger.warn({ err, conversationId: state.id }, 'Realtime knowledge extraction failed');
+  });
+
+  return { response: finalResponse, conversationId: state.id };
 }
 
 /**
@@ -199,21 +247,62 @@ export async function* handleTurnStream(
   const historySummary = conversationSummaries.get(state.id);
   const messages = assemblePrompt(state.buffer, recallResult, historySummary);
 
-  // 6. Stream LLM response
+  // 6. Tool calling 循环（非流式）
+  const toolDefs = getToolDefinitions();
+  const MAX_TOOL_ITERATIONS = 5;
+
+  for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
+    const result = await chatCompletionFull(messages, {
+      tools: toolDefs,
+      toolChoice: 'auto',
+    });
+
+    if (result.toolCalls && result.toolCalls.length > 0) {
+      // 添加 assistant + tool 消息
+      messages.push({
+        role: 'assistant' as const,
+        content: result.content,
+        tool_calls: result.toolCalls,
+      });
+      for (const toolCall of result.toolCalls) {
+        // 只处理 function 类型的 tool call
+        if (toolCall.type !== 'function') continue;
+
+        let toolResult: string;
+        try {
+          const args = JSON.parse(toolCall.function.arguments);
+          toolResult = await executeTool(toolCall.function.name, args);
+        } catch (err) {
+          toolResult = `工具调用失败: ${err instanceof Error ? err.message : String(err)}`;
+        }
+        messages.push({
+          role: 'tool' as const,
+          tool_call_id: toolCall.id,
+          content: toolResult,
+        });
+      }
+      continue;
+    }
+
+    // 没有更多 tool_calls，跳出循环
+    break;
+  }
+
+  // 7. 最后一次调用：流式输出最终响应
   let fullResponse = '';
   for await (const chunk of streamChatCompletion(messages)) {
     fullResponse += chunk;
     yield { chunk, conversationId: state.id };
   }
 
-  // 7. Store response
+  // 8. Store response
   storeMessage(state, 'assistant', fullResponse);
   state.turnCount++;
 
-  // 8. Enqueue background extraction
-  if (state.turnCount % 5 === 0) {
-    enqueueKnowledgeExtraction(state.id);
-  }
+  // 9. Realtime knowledge extraction (fire-and-forget, does not block response)
+  extractKnowledgeImmediate(state.id).catch((err) => {
+    logger.warn({ err, conversationId: state.id }, 'Realtime knowledge extraction failed');
+  });
 
   yield { conversationId: state.id, done: true };
 }
