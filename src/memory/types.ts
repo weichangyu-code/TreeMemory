@@ -30,3 +30,18 @@ export interface RecallResult {
   temporalContext: TemporalNode[];
   totalTokens: number;
 }
+
+// 基本信息的标准键
+export type ProfileKey =
+  | 'bot_name'       // Bot的名字
+  | 'bot_persona'    // Bot的人设/性格描述
+  | 'owner_name'     // 主人的名字/称呼
+  | 'owner_info'     // 主人的基本描述
+  | 'relationship'   // Bot和主人的关系描述
+  | string;          // 允许自定义键
+
+export interface ProfileEntry {
+  key: ProfileKey;
+  value: string;
+  path: string;
+}

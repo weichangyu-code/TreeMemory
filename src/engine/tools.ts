@@ -75,7 +75,7 @@ const memoryBrowseTool: ToolHandler = {
     type: 'function',
     function: {
       name: 'memory_browse',
-      description: '浏览知识树的结构。可以查看顶级分类或指定路径下的子节点。',
+      description: '浏览知识树的顶级结构或指定路径下的子节点。适合概览知识分类结构。如需深入查看某个节点的上下文（包括父节点和子节点详情），请使用 memory_navigate。',
       parameters: {
         type: 'object',
         properties: {
@@ -179,14 +179,122 @@ const memoryWriteTool: ToolHandler = {
 };
 
 // ============================================================================
-// Tool 4: history_browse - 浏览历史时间树
+// Tool 4: memory_navigate - 导航知识树节点
+// ============================================================================
+const memoryNavigateTool: ToolHandler = {
+  definition: {
+    type: 'function',
+    function: {
+      name: 'memory_navigate',
+      description: '从知识树中的某个节点出发，查看其父节点和子节点。用于深入探索知识结构。',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: '节点的完整路径，如 "Root/工作/公司"。也可以只写 "工作/公司"，会自动加上 Root/ 前缀。',
+          },
+          node_id: {
+            type: 'string',
+            description: '节点ID（与path二选一）',
+          },
+          child_depth: {
+            type: 'number',
+            description: '向下展开的子节点层数，默认2',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const path = args.path as string | undefined;
+    const nodeId = args.node_id as string | undefined;
+    const childDepth = (args.child_depth as number) || 2;
+
+    // 1. 通过 path 或 node_id 定位节点
+    let targetNode: ReturnType<typeof knowledgeTree.getNodeByPath> = null;
+    if (path) {
+      const fullPath = path.startsWith('Root/') ? path : `Root/${path}`;
+      targetNode = knowledgeTree.getNodeByPath(fullPath);
+      if (!targetNode) {
+        return `未找到路径为 "${fullPath}" 的节点。`;
+      }
+    } else if (nodeId) {
+      const context = knowledgeTree.getNodeContext(nodeId, 0);
+      if (!context) {
+        return `未找到ID为 "${nodeId}" 的节点。`;
+      }
+      targetNode = context.node;
+    } else {
+      return '请提供 path 或 node_id 参数。';
+    }
+
+    // 2. 获取节点上下文
+    const context = knowledgeTree.getNodeContext(targetNode.id, childDepth);
+    if (!context) {
+      return '无法获取节点上下文。';
+    }
+
+    // 3. 激活被访问的节点
+    knowledgeTree.activate(targetNode.id);
+
+    // 4. 格式化输出
+    const lines: string[] = [];
+
+    // 当前节点
+    const score = context.node.activityScore.toFixed(2);
+    const lastAccess = context.node.lastActivatedAt.slice(0, 10);
+    lines.push(`📍 当前节点: ${context.node.path} (${context.node.nodeType})`);
+    if (context.node.content) {
+      lines.push(`   内容: ${context.node.content}`);
+    }
+    lines.push(`   活跃度: ${score} | 最后访问: ${lastAccess}`);
+
+    // 父节点
+    lines.push('');
+    if (context.parent) {
+      lines.push(`⬆️ 父节点: ${context.parent.path} (${context.parent.nodeType})`);
+      if (context.parent.content) {
+        lines.push(`   内容: ${context.parent.content}`);
+      }
+    } else {
+      lines.push('⬆️ 父节点: 无（这是根节点）');
+    }
+
+    // 子节点
+    lines.push('');
+    if (context.children.length > 0) {
+      lines.push(`⬇️ 子节点 (${childDepth}层, 共${context.children.length}个):`);
+
+      // 按深度和路径组织子节点显示
+      const baseDepth = context.node.path.split('/').length;
+      for (const child of context.children) {
+        const childDepthLevel = child.path.split('/').length - baseDepth;
+        const indent = '  '.repeat(childDepthLevel);
+        const icon = child.nodeType === 'category' ? '📁' : '📄';
+        const contentPreview = child.content
+          ? `: ${child.content.length > 50 ? child.content.slice(0, 50) + '...' : child.content}`
+          : '';
+        lines.push(`${indent}${icon} ${child.name}${contentPreview}`);
+      }
+    } else {
+      lines.push('⬇️ 子节点: 无');
+    }
+
+    return lines.join('\n');
+  },
+};
+
+// ============================================================================
+// Tool 5: history_browse - 浏览历史时间树
 // ============================================================================
 const historyBrowseTool: ToolHandler = {
   definition: {
     type: 'function',
     function: {
       name: 'history_browse',
-      description: '浏览历史对话记录的时间树结构。可以按天、小时或节点ID查看。',
+      description: '浏览历史对话记录的时间树。支持按天查看小时摘要、按小时查看详细对话、按节点ID查看子节点。时间树的摘要由后台自动定期整理生成。',
       parameters: {
         type: 'object',
         properties: {
@@ -288,7 +396,7 @@ const historyBrowseTool: ToolHandler = {
 };
 
 // ============================================================================
-// Tool 5: history_recall - 按时间范围回忆历史
+// Tool 6: history_recall - 按时间范围回忆历史
 // ============================================================================
 const historyRecallTool: ToolHandler = {
   definition: {
@@ -369,7 +477,7 @@ const historyRecallTool: ToolHandler = {
 };
 
 // ============================================================================
-// Tool 6: get_current_time - 获取当前时间
+// Tool 7: get_current_time - 获取当前时间
 // ============================================================================
 const getCurrentTimeTool: ToolHandler = {
   definition: {
@@ -405,6 +513,90 @@ const getCurrentTimeTool: ToolHandler = {
 };
 
 // ============================================================================
+// Tool 8: profile_set - 设置基本信息
+// ============================================================================
+const profileSetTool: ToolHandler = {
+  definition: {
+    type: 'function',
+    function: {
+      name: 'profile_set',
+      description: '设置基本信息（如Bot名字、主人名字等核心身份信息）',
+      parameters: {
+        type: 'object',
+        properties: {
+          key: {
+            type: 'string',
+            description: '信息键名。预定义键：bot_name（Bot名字）、bot_persona（Bot人设）、owner_name（主人名字）、owner_info（主人简介）、relationship（关系描述）。也支持自定义键名。',
+          },
+          value: {
+            type: 'string',
+            description: '信息内容',
+          },
+        },
+        required: ['key', 'value'],
+      },
+    },
+  },
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const key = args.key as string;
+    const value = args.value as string;
+
+    if (!key) {
+      return '错误：键名不能为空。';
+    }
+    if (!value) {
+      return '错误：内容不能为空。';
+    }
+
+    const node = knowledgeTree.setProfile(key, value);
+    return `已设置基本信息: ${key} = ${value}\n存储路径: ${node.path}`;
+  },
+};
+
+// ============================================================================
+// Tool 9: profile_get - 获取基本信息
+// ============================================================================
+const profileGetTool: ToolHandler = {
+  definition: {
+    type: 'function',
+    function: {
+      name: 'profile_get',
+      description: '获取基本信息（如Bot名字、主人名字等）',
+      parameters: {
+        type: 'object',
+        properties: {
+          key: {
+            type: 'string',
+            description: '要查询的信息键名。留空可获取所有基本信息。',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const key = args.key as string | undefined;
+
+    if (key) {
+      const value = knowledgeTree.getProfile(key);
+      if (value === null) {
+        return `未找到基本信息: ${key}`;
+      }
+      return `${key} = ${value}`;
+    }
+
+    // 获取所有基本信息
+    const profiles = knowledgeTree.getAllProfiles();
+    if (profiles.length === 0) {
+      return '暂无基本信息。';
+    }
+
+    const lines = profiles.map((p) => `- ${p.key}: ${p.value}`);
+    return `基本信息（共 ${profiles.length} 项）：\n${lines.join('\n')}`;
+  },
+};
+
+// ============================================================================
 // 工具注册和导出
 // ============================================================================
 
@@ -412,9 +604,12 @@ const tools: ToolHandler[] = [
   memorySearchTool,
   memoryBrowseTool,
   memoryWriteTool,
+  memoryNavigateTool,
   historyBrowseTool,
   historyRecallTool,
   getCurrentTimeTool,
+  profileSetTool,
+  profileGetTool,
 ];
 
 const toolMap = new Map<string, ToolHandler>(

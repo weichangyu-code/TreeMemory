@@ -360,3 +360,18 @@ export function getStaleDays(): string[] {
 function sortByTime(nodes: TemporalNode[]): TemporalNode[] {
   return nodes.sort((a, b) => a.timeStart.localeCompare(b.timeStart));
 }
+
+/**
+ * 获取最近的聊天摘要（level >= 1 的节点），按时间降序
+ * 包括小时摘要(level=1)和日摘要(level=2)
+ */
+export function getRecentSummaries(limit: number = 5): TemporalNode[] {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT * FROM temporal_nodes
+    WHERE level >= 1
+    ORDER BY time_start DESC
+    LIMIT ?
+  `).all(limit) as Record<string, unknown>[];
+  return rows.map(rowToTemporalNode);
+}
